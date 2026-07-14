@@ -181,21 +181,11 @@
   flex: 1;
 }
 
-/* Отступ текста от рамки в редакторе (Live Preview / Source) */
-[class*="paragraph-callout-"].cm-line {
-  padding-left: 10px !important;
-  padding-right: 12px !important;
-  padding-top: 0px !important;
-  padding-bottom: 0px !important;
-}
-
-/* Отступ текста от рамки в режиме чтения (Reading View) */
-p[class*="paragraph-callout-"] {
-  padding-left: 10px !important;
-  padding-right: 12px !important;
-  padding-top: 0px !important;
-  padding-bottom: 0px !important;
-}
+/* Отступы текста от рамки (и в редакторе, и в режиме чтения) теперь
+   полностью управляются настройками Pad H / Pad V каждого правила —
+   см. injectCSS() в main.js. Раньше здесь был !important-оверрайд,
+   который зануля́л padding-top/bottom и фиксировал padding-left/right,
+   из-за чего слайдеры Pad H и Pad V не работали. */
 
 /* ═══════════════════════════════════════════
    Prefix replacement widget — text & emoji
