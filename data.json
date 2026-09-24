@@ -1,5 +1,5 @@
 {
-  "lang": "en",
+  "lang": "ru",
   "rules": [
     {
       "id": "r712i6q4ec",
@@ -346,6 +346,7 @@
       "fitWidth": true
     }
   ],
+  "runInActSkip": true,
   "runIn": [
     {
       "id": "rawa4jtz6l",

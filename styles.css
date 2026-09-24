@@ -66,13 +66,52 @@
   border-bottom: 1px solid var(--background-modifier-border);
 }
 
-/* Ни padding, ни border-radius здесь не задаём: предпросмотр должен
-   показывать РОВНО ту геометрию, что задана правилом (её генерирует
-   injectCSS в main.js). Раньше жёсткие 10px/16px давали предпросмотру
-   высоту, отличную от реальной выноски в заметке. */
-.paragraph-callouts-settings .callout-live-preview {
-  font-size: 15px;
-  line-height: 1.5;
+/* Предпросмотр — копия строки редактора (см. createEditorMimic в main.js).
+   Шрифт, кегль и интерлиньяж здесь не задаются жёстко: они приходят из тех
+   же переменных и правил темы, что и в заметке. Ниже — только запасные
+   значения с низкой специфичностью и обнуление полей свитка редактора. */
+.callout-preview-mimic {
+  font-family: var(--font-text);
+  font-size: var(--font-text-size);
+  line-height: var(--line-height-normal);
+  background: var(--background-primary);
+  border-radius: 6px;
+}
+
+/* Обёртки редактора у Obsidian — флекс-контейнеры со сдерживанием
+   размеров. Вне настоящего редактора это сжимает строку до ширины самого
+   длинного слова. Здесь все обёртки — обычные блоки во всю ширину. */
+.paragraph-callouts-settings .callout-preview-mimic {
+  display: block !important;
+  position: static !important;
+  width: auto !important;
+  padding: 6px 8px !important;
+  height: auto !important;
+  overflow: visible !important;
+  contain: none !important;
+}
+
+.paragraph-callouts-settings .callout-preview-mimic .cm-editor,
+.paragraph-callouts-settings .callout-preview-mimic .cm-scroller,
+.paragraph-callouts-settings .callout-preview-mimic .cm-content {
+  display: block !important;
+  position: static !important;
+  flex: none !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  height: auto !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+  contain: none !important;
+  background: transparent !important;
+}
+
+.paragraph-callouts-settings .callout-preview-mimic .cm-line {
+  display: block;
+  white-space: normal;
 }
 
 .paragraph-callouts-settings .callout-live-preview-label {

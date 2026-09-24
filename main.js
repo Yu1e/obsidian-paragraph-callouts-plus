@@ -139,14 +139,14 @@ var LANG = {
     previewText: "The quick brown fox jumps over the lazy dog.",
     invalidColor: "Invalid colour — use #RRGGBB",
     runIn: "Run-in headings",
-    runInDesc: "A short phrase at the start of a line, ending with the sign, is rendered as a chip. Lists, quotes, headings, callouts, code and note properties are left alone.",
+    runInDesc: "A short phrase at the start of a line, list item or task, ending with the sign, is rendered as a chip. The sign must be followed by a space or the end of the line. Headings, quotes, callouts, tables, numbered lists, code and note properties are left alone. To turn chips off in one note: cssclasses: run-in-off.",
     addRunIn: "Add run-in heading style",
     addRunInBtn: "＋ Add style",
     newRunIn: "New run-in heading",
     runInSign: "Sign",
     runInSignDesc: "The character the heading ends with. A longer sign wins over a shorter one.",
     runInWords: "Max words",
-    runInWordsDesc: "Punctuation between words is not counted: «Cf.» + «with» is two words.",
+    runInWordsDesc: "Words are counted by spaces. Any characters are allowed before the sign: digits, brackets, slashes.",
     runInRadius: "Corner radius",
     runInDuplicate: "Duplicate style",
     runInList: "Expressions",
@@ -159,6 +159,9 @@ var LANG = {
     runInText: "Font colour",
     runInBg: "Fill colour",
     runInBorder: "Border colour",
+    runInAct: "Defer to Always Color Text",
+    runInActDesc: "A chip is not drawn when the same expression, with or without the sign, is set up in the Always Color Text plugin.",
+    calloutOffNote: "To turn paragraph callouts off in one note: cssclasses: p-callout-off.",
   },
   ru: {
     title: "Paragraph Callouts Plus",
@@ -223,14 +226,14 @@ var LANG = {
     previewText: "Съешь ещё этих мягких французских булок, да выпей чаю.",
     invalidColor: "Неверный цвет — используйте #RRGGBB",
     runIn: "Вводные пометы",
-    runInDesc: "Короткая помета в начале строки, оканчивающаяся знаком, оформляется плашкой. Списки, цитаты, заголовки, выноски, код и свойства заметки не затрагиваются.",
+    runInDesc: "Короткая помета в начале строки, пункта списка или задачи, оканчивающаяся знаком, оформляется плашкой. После знака должен идти пробел или конец строки. Заголовки, цитаты, выноски, таблицы, нумерованные списки, код и свойства заметки не затрагиваются. Отключить пометы в отдельной заметке: cssclasses: run-in-off.",
     addRunIn: "Добавить оформление пометы",
     addRunInBtn: "＋ Добавить оформление",
     newRunIn: "Новая помета",
     runInSign: "Знак",
     runInSignDesc: "Знак, которым заканчивается помета. Длинный знак срабатывает раньше короткого.",
     runInWords: "Слов не больше",
-    runInWordsDesc: "Пунктуация между словами не считается: «Цит.» и «по» — это два слова.",
+    runInWordsDesc: "Слова считаются по пробелам. До знака допустимы любые символы: цифры, скобки, слеши.",
     runInRadius: "Скругление углов",
     runInDuplicate: "Дублировать оформление",
     runInList: "Выражения",
@@ -243,6 +246,9 @@ var LANG = {
     runInText: "Цвет шрифта",
     runInBg: "Цвет заливки",
     runInBorder: "Цвет рамки",
+    runInAct: "Уступать Always Color Text",
+    runInActDesc: "Помета не оформляется, если то же выражение — со знаком или без — настроено в плагине Always Color Text.",
+    calloutOffNote: "Отключить псевдовыноски в отдельной заметке: cssclasses: p-callout-off.",
   },
 };
 
@@ -284,38 +290,63 @@ try { runInLang = require("@codemirror/language"); } catch (e) { runInLang = nul
 
 var RUNIN_SKIP_NODE = /codeblock|frontmatter|math|inline-code|comment/i;
 
-/* Слово: буквы, возможен внутренний дефис («Санкт-Петербург»), возможна
-   хвостовая точка или запятая («См.», «Итак,»). Пунктуация словом не
-   считается — «Цит. по» это два слова, а не три. */
-var RUNIN_WORD = "[А-Яа-яЁёA-Za-z]+(?:-[А-Яа-яЁёA-Za-z]+)*[.,]?";
-var RUNIN_FIRST = "[А-ЯЁA-Z][А-Яа-яЁёA-Za-z]*(?:-[А-Яа-яЁёA-Za-z]+)*[.,]?";
+var RUNIN_MAX_WORDS = 10;
 
 function escapeRunInRe(s) {
   return s.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
 }
 
-/* Шаблон: до maxWords слов с заглавной буквы, затем знак-триггер.
-
-   Флага m нет намеренно: выражение всегда применяется к тексту ровно одной
-   строки, поэтому ^ не может сработать в середине длинного абзаца. Флага i
-   тоже нет — заглавная буква в начале это то, что не пускает сюда «https:».
-   А «Встреча в 10:30» не ловится потому, что слово состоит только из букв:
-   «10» словом не считается.
-
-   Пробел перед знаком необязателен: двоеточие пишут вплотную к слову,
-   а тире — через пробел («Итог — вывод дня»). */
+/* Шаблон пометы: знак и предельное число слов. Само сопоставление —
+   в execRunInPattern. */
 function buildRunInPattern(sign, maxWords) {
   var s = String(sign == null ? "" : sign).trim();
   if (!s) return null;
   var n = parseInt(maxWords, 10);
   if (!(n >= 1)) n = 3;
-  if (n > 6) n = 6;
-  try {
-    return new RegExp("^" + RUNIN_FIRST + "(?: " + RUNIN_WORD + "){0," + (n - 1) + "} ?" + escapeRunInRe(s));
-  } catch (e) {
-    return null;
+  if (n > RUNIN_MAX_WORDS) n = RUNIN_MAX_WORDS;
+  return { sign: s, max: n };
+}
+
+/* Помета — всё от начала текста до первого знака, за которым идёт пробел
+   или конец строки. До знака годятся любые символы: цифры, скобки, слеши,
+   разметка других плагинов. Слова считаются по пробелам.
+
+   Требование пробела после знака отсекает «https://» и «10:30»; отдельно
+   отсекается «http:» и «https:» с пробелом после. */
+function execRunInPattern(p, text) {
+  if (!text || /^\s/.test(text)) return null;
+  var from = 0;
+  for (;;) {
+    var idx = text.indexOf(p.sign, from);
+    if (idx < 0) return null;
+    var prefix = text.slice(0, idx);
+    if (prefix.trim() === "") { from = idx + 1; continue; }
+    if (prefix.trim().split(/\s+/).length > p.max) return null;
+    var after = text.charAt(idx + p.sign.length);
+    var spaced = (after === "" || /\s/.test(after));
+    var isUrl = /(?:^|[^A-Za-zА-Яа-яЁё])https?\s*$/i.test(prefix);
+    if (spaced && !isUrl) return text.slice(0, idx + p.sign.length);
+    from = idx + 1;
   }
 }
+
+/* Начало текста пометы в строке исходника. Задача: отступ, «-», пробелы,
+   «[ ]» с пустотой или одним символом внутри, пробел. Пункт списка: отступ,
+   «-», пробел. «*» и «+» — те же маркеры в markdown, в режиме чтения они
+   неотличимы от дефиса, поэтому ловятся вместе с ним.
+   -1 — строку не трогаем: нумерованный список или отступ без маркера. */
+var RUNIN_TASK = /^[ \t]*[-*+][ \t]+\[[^\]]?\] /;
+var RUNIN_BULLET = /^[ \t]*[-*+] /;
+function runInBodyStart(text) {
+  var m = RUNIN_TASK.exec(text) || RUNIN_BULLET.exec(text);
+  if (m) return m[0].length;
+  if (/^\s/.test(text) || /^\d{1,9}[.)]\s/.test(text)) return -1;
+  return 0;
+}
+
+/* Строки, которые помету не получают никогда: заголовок, цитата и выноска,
+   таблица, код-фенс, формула, сноска и ссылка-определение, HTML. */
+var RUNIN_SKIP_LINE = /^(?:#{1,6}(?:\s|$)|>|\||```|~~~|\$\$|\[[^\]]+\]:\s|<\/?[A-Za-z!])/;
 
 /* Список: перечисленные через запятую выражения ловятся буквально, вне
    зависимости от числа слов и заглавных букв. Длинное выражение проверяется
@@ -352,13 +383,13 @@ function buildRunInIndex(rules) {
   for (var i = 0; i < rules.length; i++) {
     var r = rules[i];
     var listRe = r.patternOnly ? null : buildRunInList(r.list, r.sign);
-    var patRe = r.listOnly ? null : buildRunInPattern(r.sign, r.maxWords);
-    if (!listRe && !patRe) continue;
+    var pat = r.listOnly ? null : buildRunInPattern(r.sign, r.maxWords);
+    if (!listRe && !pat) continue;
     var cls = "paragraph-runin paragraph-runin-" + r.id;
     out.push({
       rule: r,
       listRe: listRe,
-      patRe: patRe,
+      pat: pat,
       len: String(r.sign == null ? "" : r.sign).length,
       cls: cls,
       deco: view.Decoration.mark({ class: cls }),
@@ -374,8 +405,9 @@ function matchRunInAt(index, text) {
   for (var i = 0; i < index.length; i++) {
     var e = index[i];
     var m = e.listRe ? e.listRe.exec(text) : null;
-    if (!m && e.patRe) m = e.patRe.exec(text);
-    if (m) return { e: e, text: m[0] };
+    var t = m ? m[0] : null;
+    if (t === null && e.pat) t = execRunInPattern(e.pat, text);
+    if (t !== null) return { e: e, text: t };
   }
   return null;
 }
@@ -402,28 +434,232 @@ function runInSkippedNode(ev, pos) {
   return false;
 }
 
-/* Режим чтения: начало абзаца и всё, что идёт после <br>, — чтобы пометы
-   работали и на строках после Shift+Enter. */
-function markRunInInParagraph(p, index) {
-  var nodes = Array.prototype.slice.call(p.childNodes);
-  var atLineStart = true;
-  for (var i = 0; i < nodes.length; i++) {
-    var node = nodes[i];
-    if (node.nodeName === "BR") { atLineStart = true; continue; }
-    if (atLineStart && node.nodeType === Node.TEXT_NODE) {
-      var text = node.nodeValue || "";
-      var m = matchRunInAt(index, text);
-      if (m) {
-        var span = document.createElement("span");
-        span.className = m.e.cls;
-        span.textContent = m.text;
-        var rest = document.createTextNode(text.slice(m.text.length));
-        p.replaceChild(rest, node);
-        p.insertBefore(span, rest);
+/* Режим чтения. Блок — <p> или <li>. Строки внутри блока разделены <br>
+   (Shift+Enter). Текст строки собирается по всем её узлам, поэтому помета
+   ловится и тогда, когда в ней жирный, ссылка или разметка другого
+   плагина. Маркеры пункта списка и чекбокс задачи пропускаются; вложенный
+   список и абзацы внутри пункта останавливают разбор. */
+var RUNIN_BLOCK_TAGS = /^(UL|OL|P|DIV|BLOCKQUOTE|PRE|TABLE)$/;
+
+function isRunInMarker(node) {
+  if (node.nodeType !== 1) return false;
+  if (node.nodeName === "INPUT") return true;
+  var c = node.classList;
+  return !!c && (c.contains("list-bullet") || c.contains("list-collapse-indicator")
+    || c.contains("collapse-indicator"));
+}
+
+function markRunInInBlock(block, index, act) {
+  var seg = [];
+  var kids = Array.prototype.slice.call(block.childNodes);
+  for (var i = 0; i < kids.length; i++) {
+    var node = kids[i];
+    if (isRunInMarker(node)) continue;
+    if (node.nodeName === "BR") { markRunInSegment(seg, index, act); seg = []; continue; }
+    if (node.nodeType === 1 && RUNIN_BLOCK_TAGS.test(node.nodeName)) break;
+    seg.push(node);
+  }
+  markRunInSegment(seg, index, act);
+}
+
+function markRunInSegment(seg, index, act) {
+  if (!seg.length) return;
+  var texts = [];
+  for (var i = 0; i < seg.length; i++) {
+    var n = seg[i];
+    if (n.nodeType === 3) { texts.push(n); continue; }
+    if (n.nodeType !== 1) continue;
+    var w = document.createTreeWalker(n, NodeFilter.SHOW_TEXT);
+    var t;
+    while ((t = w.nextNode())) texts.push(t);
+  }
+  if (!texts.length) return;
+  var full = "";
+  var starts = [];
+  for (var j = 0; j < texts.length; j++) {
+    starts.push(full.length);
+    full += texts[j].nodeValue || "";
+  }
+  var lead = /^\s*/.exec(full)[0].length;
+  var m = matchRunInAt(index, full.slice(lead));
+  if (!m) return;
+  if (act && act(m.text, m.e.rule.sign)) return;
+
+  var a = lead, b = lead + m.text.length;
+  var sN = -1, eN = -1;
+  for (var k = 0; k < texts.length; k++) {
+    var end = starts[k] + (texts[k].nodeValue || "").length;
+    if (sN < 0 && a < end) sN = k;
+    if (eN < 0 && b <= end) eN = k;
+  }
+  if (sN < 0 || eN < 0) return;
+
+  var range = document.createRange();
+  range.setStart(texts[sN], a - starts[sN]);
+  range.setEnd(texts[eN], b - starts[eN]);
+  var span = document.createElement("span");
+  span.className = m.e.cls;
+  span.appendChild(range.extractContents());
+  range.insertNode(span);
+}
+
+/* ═══════════════════════════════════════════
+   Отключение в отдельной заметке: cssclasses
+   ═══════════════════════════════════════════ */
+
+var OFF_RUNIN = "run-in-off";
+var OFF_CALLOUT = "p-callout-off";
+
+function pushCssNames(out, raw) {
+  var parts = String(raw == null ? "" : raw).replace(/[\[\]"']/g, " ").split(/[\s,]+/);
+  for (var i = 0; i < parts.length; i++) if (parts[i]) out.push(parts[i]);
+}
+
+/* Классы из свойств, прочитанные прямо из текста редактора: так отключение
+   срабатывает сразу, без ожидания кэша метаданных. */
+var OFF_CACHE = typeof WeakMap === "function" ? new WeakMap() : null;
+function offFlagsFromDoc(doc) {
+  if (OFF_CACHE && OFF_CACHE.has(doc)) return OFF_CACHE.get(doc);
+  var names = [];
+  if (doc.lines >= 2 && doc.line(1).text.trim() === "---") {
+    var limit = Math.min(doc.lines, 200);
+    var inKey = false;
+    for (var i = 2; i <= limit; i++) {
+      var t = doc.line(i).text;
+      if (t.trim() === "---") break;
+      var m = /^cssclass(?:es)?\s*:\s*(.*)$/i.exec(t);
+      if (m) { inKey = true; pushCssNames(names, m[1]); continue; }
+      if (inKey) {
+        var li = /^\s*-\s*(.*)$/.exec(t);
+        if (li) { pushCssNames(names, li[1]); continue; }
+        inKey = false;
       }
     }
-    atLineStart = false;
   }
+  var flags = { runIn: names.indexOf(OFF_RUNIN) >= 0, callout: names.indexOf(OFF_CALLOUT) >= 0 };
+  if (OFF_CACHE) OFF_CACHE.set(doc, flags);
+  return flags;
+}
+
+function offFlagsFromFrontmatter(fm) {
+  var names = [];
+  if (fm) {
+    var vals = [fm.cssclasses, fm.cssclass];
+    for (var i = 0; i < vals.length; i++) {
+      var v = vals[i];
+      if (Array.isArray(v)) { for (var j = 0; j < v.length; j++) pushCssNames(names, v[j]); }
+      else if (v != null) pushCssNames(names, v);
+    }
+  }
+  return { runIn: names.indexOf(OFF_RUNIN) >= 0, callout: names.indexOf(OFF_CALLOUT) >= 0 };
+}
+
+/* ═══════════════════════════════════════════
+   Always Color Text: уступить раскраску
+   ═══════════════════════════════════════════ */
+
+/* Функция (текст пометы, знак) → true, если Always Color Text сам
+   раскрашивает эту помету. Проверка идёт его собственным сопоставителем
+   и его скомпилированными записями, поэтому учитываются все его режимы:
+   «содержит», «начинается с», «заканчивается на», фразы, регулярки, группы.
+   Помета уступается, когда его раскраска покрывает весь её текст до знака.
+   null — плагина нет или он выключен. */
+function buildActMatcher(app) {
+  var p = app && app.plugins && app.plugins.plugins && app.plugins.plugins["always-color-text"];
+  var s = p && p.settings;
+  if (!s || s.enabled === false) return null;
+
+  var pm = p._patternMatcher;
+  if (pm && typeof pm.match === "function") {
+    var entries = [];
+    var lists = [p._compiledWordEntries, p._compiledTextBgEntries];
+    for (var li = 0; li < lists.length; li++) {
+      if (!Array.isArray(lists[li])) continue;
+      for (var lj = 0; lj < lists[li].length; lj++) {
+        var ce = lists[li][lj];
+        if (!ce || ce.invalid) continue;
+        if (!ce.regex && typeof pm.compilePattern === "function") {
+          try { pm.compilePattern(ce); } catch (x) { /* пропускаем */ }
+        }
+        if (ce.regex) entries.push(ce);
+      }
+    }
+    if (!entries.length) return null;
+    return function (text, sign) {
+      var t = String(text);
+      var sg = String(sign == null ? "" : sign).trim();
+      var bodyEnd = (sg && t.slice(-sg.length) === sg) ? t.length - sg.length : t.length;
+      var spans;
+      try { spans = pm.match(t, entries) || []; } catch (x) { return false; }
+      if (!spans.length) return false;
+      var covered = new Array(bodyEnd);
+      for (var i = 0; i < spans.length; i++) {
+        var a = Math.max(0, spans[i].start), b = Math.min(bodyEnd, spans[i].end);
+        for (var k = a; k < b; k++) covered[k] = true;
+      }
+      var any = false;
+      for (var c = 0; c < bodyEnd; c++) {
+        if (/\s/.test(t.charAt(c))) continue;
+        if (!covered[c]) return false;
+        any = true;
+      }
+      return any;
+    };
+  }
+
+  /* Запасной путь для версий без доступного сопоставителя: сравнение
+     пометы целиком, со знаком и без него. */
+  var gcs = !!s.caseSensitive;
+  var lits = [];
+  var res = [];
+  function add(e) {
+    if (!e) return;
+    var cs = (typeof e.caseSensitive === "boolean") ? e.caseSensitive : gcs;
+    if (e.isRegex) {
+      if (!s.enableRegexSupport) return;
+      var pat = String(e.pattern || "").trim();
+      if (!pat) return;
+      var fl = String(e.flags || "").replace(/[gy]/g, "");
+      if (!cs && fl.indexOf("i") < 0) fl += "i";
+      try { res.push(new RegExp("^(?:" + pat + ")$", fl)); } catch (x) { /* битая регулярка */ }
+      return;
+    }
+    var arr = (Array.isArray(e.groupedPatterns) && e.groupedPatterns.length) ? e.groupedPatterns : [e.pattern];
+    for (var i = 0; i < arr.length; i++) {
+      var w = String(arr[i] == null ? "" : arr[i]).trim();
+      if (w) lits.push({ w: cs ? w : w.toLowerCase(), cs: cs });
+    }
+  }
+  var lists = [s.wordEntries, s.textBgColoringEntries];
+  for (var a = 0; a < lists.length; a++) {
+    if (Array.isArray(lists[a])) for (var b = 0; b < lists[a].length; b++) add(lists[a][b]);
+  }
+  if (Array.isArray(s.wordEntryGroups)) {
+    for (var g = 0; g < s.wordEntryGroups.length; g++) {
+      var grp = s.wordEntryGroups[g];
+      if (!grp || grp.active === false || !Array.isArray(grp.entries)) continue;
+      for (var c = 0; c < grp.entries.length; c++) add(grp.entries[c]);
+    }
+  }
+  if (!lits.length && !res.length) return null;
+  return function (text, sign) {
+    var full = String(text).trim();
+    var cands = [full];
+    var sg = String(sign == null ? "" : sign).trim();
+    if (sg && full.slice(-sg.length) === sg) cands.push(full.slice(0, -sg.length).trim());
+    for (var i = 0; i < cands.length; i++) {
+      var cd = cands[i];
+      if (!cd) continue;
+      var low = cd.toLowerCase();
+      for (var j = 0; j < lits.length; j++) {
+        if ((lits[j].cs ? cd : low) === lits[j].w) return true;
+      }
+      for (var k = 0; k < res.length; k++) {
+        if (res[k].test(cd)) return true;
+      }
+    }
+    return false;
+  };
 }
 
 /* ═══════════════════════════════════════════
@@ -437,6 +673,12 @@ function markRunInInParagraph(p, index) {
    даёт «мягкий» перенос без хвоста — и это НЕ продолжение абзаца-выноски.
    Поддерживаем все три общепринятых записи. */
 var HARD_BREAK_RE = /(?:[ \t]{2,}|\\|<br\s*\/?>)$/i;
+
+/* Пустая строка в смысле markdown: только пробелы и табы. Неразрывный
+   пробел пустой строкой не считается — на этом держится пустая строка
+   внутри выноски (два Shift+Enter подряд). */
+var NBSP = "\u00A0";
+function isBlankLine(t) { return /^[ \t]*$/.test(t); }
 
 /* Строка открывает НОВЫЙ markdown-блок: заголовок, список, задачу, цитату,
    код-фенс, таблицу, горизонтальную черту. Жёсткий перенос перед такой
@@ -466,7 +708,7 @@ function calloutRuleIdAt(doc, n, index) {
     var t = doc.line(i).text;
     var m = matchPrefixIn(index, t);
     if (m) return m.rule.id;
-    if (t.trim() === "" || isBlockStart(t)) return null;
+    if (isBlankLine(t) || isBlockStart(t)) return null;
     if (i === 1) return null;
     if (!HARD_BREAK_RE.test(doc.line(i - 1).text)) return null;
     i -= 1;
@@ -584,6 +826,8 @@ class ParagraphCalloutsPlugin extends obsidian.Plugin {
     var savedRunIn = null;
     if (raw && Array.isArray(raw.runIn)) savedRunIn = raw.runIn;
     else if (raw && Array.isArray(raw.labels)) savedRunIn = raw.labels;
+
+    this.settings.runInActSkip = !(raw && raw.runInActSkip === false);
 
     if (savedRunIn) {
       var rTemplate = newRunInRule();
@@ -715,6 +959,20 @@ class ParagraphCalloutsPlugin extends obsidian.Plugin {
         + "padding-bottom:0!important;"
         + (fit ? "width:auto!important;" : "")
         + "}\n";
+
+      /* ── Режим чтения ──
+         Темы задают абзацу отступы селектором вида `.markdown-rendered p`,
+         он сильнее одиночного класса. Перебиваем так же адресно, как в
+         редакторе, чтобы высота выноски везде была одна. */
+      var R = ".markdown-rendered p" + C;
+      css += R + "{"
+        + "padding-top:" + padTop + "px!important;"
+        + "padding-bottom:" + padBottom + "px!important;"
+        + "padding-left:" + padH + "px!important;"
+        + "padding-right:" + padH + "px!important;"
+        + "}\n";
+      css += R + "+p" + C + "{padding-top:0!important;}\n";
+      css += R + ":has(+p" + C + "){padding-bottom:0!important;}\n";
     }
 
     /* ── Вводные пометы ──
@@ -769,14 +1027,34 @@ class ParagraphCalloutsPlugin extends obsidian.Plugin {
         var st = ev.state;
         var sel = st.selection.main;
         if (!sel.empty) return false;
+        if (offFlagsFromDoc(st.doc).callout) return false;
         var index = buildPrefixIndex(plugin.settings.rules);
         var line = st.doc.lineAt(sel.head);
-        if (!calloutRuleIdAt(st.doc, line.number, index)) return false;
+
+        if (!calloutRuleIdAt(st.doc, line.number, index)) {
+          /* Второй Shift+Enter подряд: курсор на пустой строке сразу после
+             строки выноски с жёстким переносом. Заполняем её неразрывным
+             пробелом с маркером переноса — получается пустая строка внутри
+             выноски, абзац не рвётся. */
+          if (isBlankLine(line.text) && line.number > 1
+              && HARD_BREAK_RE.test(st.doc.line(line.number - 1).text)
+              && calloutRuleIdAt(st.doc, line.number - 1, index)) {
+            var fill = NBSP + "  \n";
+            ev.dispatch({
+              changes: { from: line.from, to: line.to, insert: fill },
+              selection: { anchor: line.from + fill.length },
+              scrollIntoView: true,
+              userEvent: "input"
+            });
+            return true;
+          }
+          return false;
+        }
 
         /* Маркер дописываем только если его ещё нет и слева есть текст:
            иначе получится строка из одних пробелов. */
         var before = line.text.slice(0, sel.head - line.from);
-        var marker = (before.trim().length > 0 && !HARD_BREAK_RE.test(before)) ? "  " : "";
+        var marker = (!isBlankLine(before) && !HARD_BREAK_RE.test(before)) ? "  " : "";
         ev.dispatch(st.replaceSelection(marker + "\n"), {
           scrollIntoView: true,
           userEvent: "input"
@@ -798,6 +1076,7 @@ class ParagraphCalloutsPlugin extends obsidian.Plugin {
         build(ev) {
           var builder = new state.RangeSetBuilder();
           var doc = ev.state.doc;
+          if (offFlagsFromDoc(doc).callout) return builder.finish();
           var index = buildPrefixIndex(plugin.settings.rules);
 
           function matchPrefix(t) { return matchPrefixIn(index, t); }
@@ -819,7 +1098,7 @@ class ParagraphCalloutsPlugin extends obsidian.Plugin {
           for (var e = 0; e < seeds.length; e++) {
             var n2 = seeds[e];
             var seedText = doc.line(n2).text;
-            if (seedText.trim() === "" || isBlockStart(seedText)) continue;
+            if (isBlankLine(seedText) || isBlockStart(seedText)) continue;
             while (n2 > 1) {
               if (matchPrefix(doc.line(n2).text)) break; /* это первая строка абзаца */
               if (!HARD_BREAK_RE.test(doc.line(n2 - 1).text)) break;
@@ -835,7 +1114,7 @@ class ParagraphCalloutsPlugin extends obsidian.Plugin {
             var text = line.text;
 
             /* Пустая строка — конец абзаца. */
-            if (text.trim() === "") { prevRuleId = null; continue; }
+            if (isBlankLine(text)) { prevRuleId = null; continue; }
 
             var m = matchPrefix(text);
 
@@ -924,7 +1203,10 @@ class ParagraphCalloutsPlugin extends obsidian.Plugin {
           if (index.length === 0) return builder.finish();
 
           var doc = ev.state.doc;
-          var prefixIndex = buildPrefixIndex(plugin.settings.rules);
+          var off = offFlagsFromDoc(doc);
+          if (off.runIn) return builder.finish();
+          var prefixIndex = off.callout ? [] : buildPrefixIndex(plugin.settings.rules);
+          var act = (plugin.settings.runInActSkip !== false) ? buildActMatcher(plugin.app) : null;
           var fmEnd = runInFrontmatterEnd(doc);
           var last = -1;
           var ranges = ev.visibleRanges;
@@ -939,14 +1221,20 @@ class ParagraphCalloutsPlugin extends obsidian.Plugin {
               if (line.from < fmEnd) continue;
               if (line.length < 2) continue;
 
-              var m = matchRunInAt(index, line.text);
+              var start = runInBodyStart(line.text);
+              if (start < 0) continue;
+              var body = line.text.slice(start);
+              if (RUNIN_SKIP_LINE.test(body)) continue;
+
+              var m = matchRunInAt(index, body);
               if (!m) continue;
               /* Внутри абзаца-выноски помету не ставим: в режиме чтения
                  такой абзац тоже пропускается, иначе два режима разойдутся. */
-              if (calloutRuleIdAt(doc, line.number, prefixIndex)) continue;
-              if (runInSkippedNode(ev, line.from)) continue;
+              if (prefixIndex.length && calloutRuleIdAt(doc, line.number, prefixIndex)) continue;
+              if (runInSkippedNode(ev, line.from + start)) continue;
+              if (act && act(m.text, m.e.rule.sign)) continue;
 
-              builder.add(line.from, line.from + m.text.length, m.e.deco);
+              builder.add(line.from + start, line.from + start + m.text.length, m.e.deco);
               last = line.from;
             }
           }
@@ -960,8 +1248,16 @@ class ParagraphCalloutsPlugin extends obsidian.Plugin {
   /* ── Reading view ── */
 
   postProcess(el, ctx) {
-    var index = buildPrefixIndex(this.settings.rules);
-    var runInIndex = this.runInIndex || buildRunInIndex(this.settings.runIn);
+    var fm = ctx && ctx.frontmatter;
+    if (!fm && ctx && ctx.sourcePath) {
+      var f = this.app.vault.getAbstractFileByPath(ctx.sourcePath);
+      var cache = f ? this.app.metadataCache.getFileCache(f) : null;
+      fm = cache ? cache.frontmatter : null;
+    }
+    var off = offFlagsFromFrontmatter(fm);
+    var index = off.callout ? [] : buildPrefixIndex(this.settings.rules);
+    var runInIndex = off.runIn ? [] : (this.runInIndex || buildRunInIndex(this.settings.runIn));
+    var act = (runInIndex.length > 0 && this.settings.runInActSkip !== false) ? buildActMatcher(this.app) : null;
     var paragraphs = el.querySelectorAll("p");
     /* Отслеживаем последний обработанный <p> и его правило, чтобы у
        нескольких подряд идущих абзацев с одним и тем же префиксом
@@ -1010,24 +1306,48 @@ class ParagraphCalloutsPlugin extends obsidian.Plugin {
         break;
       }
 
-      /* Пометы ставим только в обычных абзацах. В выносках, списках,
-         цитатах и таблицах строка в исходнике начинается с префикса, «- »
-         или «> » и под выражение всё равно не подходит — в режиме чтения
-         ведём себя так же, иначе два режима разойдутся. */
+      /* Пометы ставим в обычных абзацах и в пунктах маркированных списков
+         и задач. Выноски, цитаты, таблицы и нумерованные списки — как в
+         редакторе, без помет, иначе два режима разойдутся. */
+      var pLi = p.closest("li");
       if (!matchedRuleId && runInIndex.length > 0
-          && !p.closest("blockquote, li, table, pre, .callout")) {
-        markRunInInParagraph(p, runInIndex);
+          && !p.closest("blockquote, table, pre, .callout")
+          && !(pLi && pLi.parentElement && pLi.parentElement.nodeName !== "UL")) {
+        markRunInInBlock(p, runInIndex, act);
       }
 
       prevRuleId = matchedRuleId;
       prevEl = matchedRuleId ? p : null;
     });
+
+    if (runInIndex.length > 0) {
+      el.querySelectorAll("li").forEach(function (li) {
+        if (!li.parentElement || li.parentElement.nodeName !== "UL") return;
+        if (li.closest("blockquote, table, pre, .callout")) return;
+        markRunInInBlock(li, runInIndex, act);
+      });
+    }
   }
 }
 
 /* ═══════════════════════════════════════════
    Settings Tab
    ═══════════════════════════════════════════ */
+
+/* Предпросмотр собран из той же разметки, что строка редактора:
+   .markdown-source-view.mod-cm6 → .cm-editor → .cm-scroller → .cm-content
+   → .cm-line. На него действуют те же правила темы и те же адресные
+   оверрайды отступов, что и на строку в заметке, — поэтому высота и
+   отступы в предпросмотре совпадают с заметкой. Поля свитка и контента,
+   которые у настоящего редактора есть, обнулены в styles.css. */
+function createEditorMimic(parent) {
+  var src = parent.createDiv({
+    cls: "markdown-source-view cm-s-obsidian mod-cm6 is-live-preview callout-preview-mimic"
+  });
+  var ed = src.createDiv({ cls: "cm-editor" });
+  var sc = ed.createDiv({ cls: "cm-scroller" });
+  return sc.createDiv({ cls: "cm-content" });
+}
 
 class CalloutsSettingTab extends obsidian.PluginSettingTab {
   constructor(app, plugin) {
@@ -1038,6 +1358,15 @@ class CalloutsSettingTab extends obsidian.PluginSettingTab {
   }
 
   t(key) { return this.plugin.t(key); }
+
+  /* Раскрыто одно правило за раз: открытие любого сворачивает остальные,
+     и псевдовыноски, и пометы. */
+  collapseOthers(keep) {
+    var all = this.containerEl.querySelectorAll("details");
+    for (var i = 0; i < all.length; i++) {
+      if (all[i] !== keep && all[i].open) all[i].open = false;
+    }
+  }
 
   display() {
     var containerEl = this.containerEl;
@@ -1077,6 +1406,8 @@ class CalloutsSettingTab extends obsidian.PluginSettingTab {
         });
       });
 
+    containerEl.createDiv({ cls: "callout-prefix-note", text: this.t("calloutOffNote") });
+
     var rules = this.plugin.settings.rules;
     for (var i = 0; i < rules.length; i++) {
       this.renderRule(containerEl, rules[i], i);
@@ -1086,6 +1417,16 @@ class CalloutsSettingTab extends obsidian.PluginSettingTab {
 
     containerEl.createEl("h2", { text: this.t("runIn") });
     containerEl.createDiv({ cls: "callout-prefix-note", text: this.t("runInDesc") });
+
+    new obsidian.Setting(containerEl)
+      .setName(this.t("runInAct"))
+      .setDesc(this.t("runInActDesc"))
+      .addToggle(function (t) {
+        t.setValue(self.plugin.settings.runInActSkip !== false).onChange(async function (v) {
+          self.plugin.settings.runInActSkip = v;
+          await self.plugin.saveSettings();
+        });
+      });
 
     new obsidian.Setting(containerEl)
       .setName(this.t("addRunIn"))
@@ -1113,7 +1454,13 @@ class CalloutsSettingTab extends obsidian.PluginSettingTab {
 
     if (this.openRunInId === runIn.id) details.open = true;
     details.addEventListener("toggle", function () {
-      if (details.open) self.openRunInId = runIn.id;
+      if (!details.open) {
+        if (self.openRunInId === runIn.id) self.openRunInId = null;
+        return;
+      }
+      self.openRunInId = runIn.id;
+      self.openRuleId = null;
+      self.collapseOthers(details);
     });
 
     var summary = details.createEl("summary", { cls: "callout-rule-summary" });
@@ -1127,7 +1474,7 @@ class CalloutsSettingTab extends obsidian.PluginSettingTab {
        сами; вручную перерисовываем только текст. */
     var previewWrap = body.createDiv({ cls: "callout-preview-sticky" });
     previewWrap.createDiv({ cls: "callout-live-preview-label", text: this.t("preview") });
-    var previewLine = previewWrap.createDiv({ cls: "callout-live-preview" });
+    var previewLine = createEditorMimic(previewWrap).createDiv({ cls: "cm-line callout-live-preview" });
     var previewChip = previewLine.createEl("span");
     var previewRest = previewLine.createEl("span");
 
@@ -1164,7 +1511,7 @@ class CalloutsSettingTab extends obsidian.PluginSettingTab {
       .setName(this.t("runInWords"))
       .setDesc(this.t("runInWordsDesc"))
       .addSlider(function (s) {
-        s.setLimits(1, 6, 1).setValue(runIn.maxWords || 3).setDynamicTooltip()
+        s.setLimits(1, RUNIN_MAX_WORDS, 1).setValue(runIn.maxWords || 3).setDynamicTooltip()
           .onChange(async function (v) { runIn.maxWords = v; await self.saveRunIn(runIn.id); });
       });
 
@@ -1257,6 +1604,7 @@ class CalloutsSettingTab extends obsidian.PluginSettingTab {
 
   async saveRunIn(labelId) {
     this.openRunInId = labelId;
+    this.openRuleId = null;
     await this.plugin.saveSettings();
     var painters = this.previewPainters || [];
     for (var i = 0; i < painters.length; i++) {
@@ -1271,7 +1619,13 @@ class CalloutsSettingTab extends obsidian.PluginSettingTab {
 
     if (this.openRuleId === rule.id) details.open = true;
     details.addEventListener("toggle", function () {
-      if (details.open) self.openRuleId = rule.id;
+      if (!details.open) {
+        if (self.openRuleId === rule.id) self.openRuleId = null;
+        return;
+      }
+      self.openRuleId = rule.id;
+      self.openRunInId = null;
+      self.collapseOthers(details);
     });
 
     var summary = details.createEl("summary", { cls: "callout-rule-summary" });
@@ -1284,7 +1638,7 @@ class CalloutsSettingTab extends obsidian.PluginSettingTab {
     /* ── Sticky Preview ── */
     var stickyWrap = body.createDiv({ cls: "callout-preview-sticky" });
     stickyWrap.createDiv({ cls: "callout-live-preview-label", text: self.t("preview") });
-    var preview = stickyWrap.createDiv({ cls: "paragraph-callout-" + rule.id + " callout-live-preview" });
+    var preview = createEditorMimic(stickyWrap).createDiv({ cls: "cm-line paragraph-callout-" + rule.id + " callout-live-preview" });
 
     /* Оформление предпросмотра (цвета, рамка, отступы, ширина) обновляется
        само: оно приходит из инжектированного CSS, который пересобирается на
@@ -1637,6 +1991,7 @@ class CalloutsSettingTab extends obsidian.PluginSettingTab {
 
   async save(ruleId) {
     this.openRuleId = ruleId;
+    this.openRunInId = null;
     await this.plugin.saveSettings();
     /* Живое обновление предпросмотра без полного перерендера настроек —
        иначе слетает фокус в поле ввода и позиция прокрутки. */
