@@ -2,12 +2,16 @@
    Settings UI — Compact & Structured
    ═══════════════════════════════════════════ */
 
+/* ВАЖНО: здесь НЕЛЬЗЯ ставить overflow: hidden/auto — любой предок с
+   отличным от visible overflow отменяет position: sticky у вложенного
+   предпросмотра (он начинает «липнуть» к этому контейнеру, который сам
+   не прокручивается, то есть не липнет вовсе). Скругление углов, ради
+   которого overflow тут стоял, теперь задано самим элементам. */
 .paragraph-callouts-settings .callout-rule-container {
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
   margin-bottom: 12px;
   background: var(--background-secondary);
-  overflow: hidden;
 }
 
 .paragraph-callouts-settings .callout-rule-summary {
@@ -18,6 +22,11 @@
   cursor: pointer;
   user-select: none;
   font-size: 16px;
+  border-radius: 7px 7px 0 0;
+}
+
+.paragraph-callouts-settings details:not([open]) > .callout-rule-summary {
+  border-radius: 7px;
 }
 
 .paragraph-callouts-settings .callout-rule-summary:hover {
@@ -52,19 +61,18 @@
   top: 0;
   z-index: 10;
   background: var(--background-secondary);
-  padding: 10px 0 6px;
+  padding: 10px 14px 6px;
   margin: 0 -14px;
-  padding-left: 14px;
-  padding-right: 14px;
   border-bottom: 1px solid var(--background-modifier-border);
 }
 
+/* Ни padding, ни border-radius здесь не задаём: предпросмотр должен
+   показывать РОВНО ту геометрию, что задана правилом (её генерирует
+   injectCSS в main.js). Раньше жёсткие 10px/16px давали предпросмотру
+   высоту, отличную от реальной выноски в заметке. */
 .paragraph-callouts-settings .callout-live-preview {
-  border-radius: 6px;
-  padding: 10px 16px;
   font-size: 15px;
   line-height: 1.5;
-  transition: all 0.15s ease;
 }
 
 .paragraph-callouts-settings .callout-live-preview-label {
@@ -181,11 +189,12 @@
   flex: 1;
 }
 
-/* Отступы текста от рамки (и в редакторе, и в режиме чтения) теперь
-   полностью управляются настройками Pad H / Pad V каждого правила —
-   см. injectCSS() в main.js. Раньше здесь был !important-оверрайд,
-   который зануля́л padding-top/bottom и фиксировал padding-left/right,
-   из-за чего слайдеры Pad H и Pad V не работали. */
+/* Отступы текста от рамки (и в редакторе, и в режиме чтения) полностью
+   управляются настройками правила: Отступ Г / Отступ ↑ / Отступ ↓ —
+   см. injectCSS() в main.js. Там же генерируется адресный оверрайд для
+   .cm-line: Obsidian и темы задают строке редактора вертикальные отступы
+   селектором с более высокой специфичностью, из-за чего слайдеры в
+   редакторе не действовали, а в предпросмотре настроек действовали. */
 
 /* ═══════════════════════════════════════════
    Prefix replacement widget — text & emoji
@@ -340,4 +349,20 @@ p .paragraph-callout-prefix-svg svg {
 
 .callout-svg-preview svg [stroke]:not([stroke="none"]):not([stroke="currentColor"]) {
   stroke: unset;
+}
+
+/* ═══════════════════════════════════════════
+   Вводные пометы (run-in headings)
+   ═══════════════════════════════════════════ */
+
+/* Геометрия плашки: внутренние отступы и тонкая рамка в один пиксель.
+   Скругление и цвета каждого правила — заливка, шрифт, рамка, радиус —
+   генерирует injectCSS() в main.js селектором .paragraph-runin-<id>. */
+.paragraph-runin {
+  padding: 1px 5px;
+  border: 1px solid transparent;
+
+  /* фон и рамка не разрываются, если помета перенесётся на другую строку */
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
